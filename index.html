@@ -30,11 +30,24 @@ h1{text-align:center;font-size:34px;margin:8px 0 18px;font-weight:800;letter-spa
 <hr class="board-divider"><section class="postit-board"><h2>아이디어 포스트잇</h2><div id="notes" class="notes"></div></section>
 <hr class="board-divider"><section class="postit-board"><h2>윤지 챙겨갈 것</h2><div id="packingNotes" class="notes"></div></section>
 </div>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
 const STORAGE_KEY='europeTripPlanner2026_backup_v3';
-const GOOGLE_SCRIPT_URL='https://script.google.com/macros/s/AKfycbwtQydnhsvZeO7iLFdnH5cdnTijstXmakmk2lwIP3vCATYJ5AjVnrg9MRjwcbAypZWnBg/exec';
-let isLoading=false, saveTimer=null, lastSavedJson='';
-function isGoogleConnected(){return GOOGLE_SCRIPT_URL.startsWith('https://script.google.com/macros/s/');}
+const firebaseConfig = {
+  apiKey: "AIzaSyAdxcQXgFg4mrF3022eQIG_sG0e0wQeS6g",
+  authDomain: "yunji-travel-planner.firebaseapp.com",
+  projectId: "yunji-travel-planner",
+  storageBucket: "yunji-travel-planner.firebasestorage.app",
+  messagingSenderId: "175419854114",
+  appId: "1:175419854114:web:a7166c41cb85b79d0d697b",
+  measurementId: "G-X010BP6S06"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const plannerDocRef = db.collection('travel').doc('plan');
+let isLoading=false, saveTimer=null, lastSavedJson='', unsubscribeFirebase=null, pendingRemoteData=null;
+function isFirebaseConnected(){return !!plannerDocRef;}
 function autoResize(el){el.style.height='23px';el.style.height=Math.max(23,el.scrollHeight)+'px'}
 function escapeHtml(str){return String(str).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#039;")}
 function makeTextarea(className='',placeholder=''){return `<textarea class="${className}" placeholder="${placeholder}" oninput="autoResize(this); savePlanner();"></textarea>`}
@@ -56,51 +69,89 @@ function getCardData(card){const prep=card.dataset.prep==='true';if(prep)return{
 function getNotes(boardId){return[...document.querySelectorAll(`#${boardId} .note textarea`)].map(t=>t.value)}
 function collectPlannerData(){return{rate:document.getElementById('rate').value,cards:[...document.querySelectorAll('.day')].map(getCardData),notes:getNotes('notes'),packingNotes:getNotes('packingNotes'),updatedAt:new Date().toISOString()}}
 function savePlanner(){if(isLoading)return;clearTimeout(saveTimer);saveTimer=setTimeout(savePlannerNow,500)}
-async function savePlannerNow(){const data=collectPlannerData(),json=JSON.stringify(data);if(json===lastSavedJson)return;localStorage.setItem(STORAGE_KEY,json);const status=document.getElementById('saveStatus');if(!isGoogleConnected()){status.textContent='내 컴퓨터에 자동 저장됨';lastSavedJson=json;return}try{status.textContent='구글 시트에 저장 중...';await fetch(GOOGLE_SCRIPT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:json});lastSavedJson=json;status.textContent='구글 시트에 자동 저장됨';clearTimeout(window.saveStatusTimer);window.saveStatusTimer=setTimeout(()=>status.textContent='공동수정 연결됨',1500)}catch(e){status.textContent='구글 저장 실패 · 내 컴퓨터에 백업됨';console.error(e)}}
+async function savePlannerNow(){
+  const data=collectPlannerData(), json=JSON.stringify(data);
+  if(json===lastSavedJson)return;
+  localStorage.setItem(STORAGE_KEY,json);
+  const status=document.getElementById('saveStatus');
+  try{
+    status.textContent='Firebase에 저장 중...';
+    await plannerDocRef.set(data);
+    lastSavedJson=json;
+    status.textContent='공동수정 저장됨';
+    clearTimeout(window.saveStatusTimer);
+    window.saveStatusTimer=setTimeout(()=>status.textContent='공동수정 연결됨',1500);
+  }catch(e){
+    status.textContent='Firebase 저장 실패 · 내 컴퓨터에 백업됨';
+    console.error(e);
+  }
+}
 function applyPlannerData(data){isLoading=true;if(data.rate)document.getElementById('rate').value=data.rate;const cards=[...document.querySelectorAll('.day')];data.cards?.forEach((saved,i)=>{const card=cards[i];if(!card)return;if(saved.prep){const list=card.querySelector('.prep-list');list.innerHTML='';(saved.items||[]).forEach(s=>{const div=document.createElement('div');div.className='prep-item';div.innerHTML=`<input type="checkbox" ${s.checked?'checked':''} onchange="savePlanner()"><textarea class="todo-text" oninput="autoResize(this); savePlanner();">${escapeHtml(s.text||'')}</textarea><button class="del" onclick="this.closest('.prep-item').remove(); savePlanner();">x</button>`;list.appendChild(div);autoResize(div.querySelector('textarea'))})}else{const textareas=[...card.querySelectorAll(':scope > .line textarea')];if(textareas[0]){textareas[0].value=saved.where||'';applyWhereColor(textareas[0]);autoResize(textareas[0])}if(textareas[1]){textareas[1].value=saved.stay||'';autoResize(textareas[1])}if(textareas[2]){textareas[2].value=saved.transport||'';autoResize(textareas[2])}const rows=[...card.querySelectorAll('.money-row')];if(rows[0]){rows[0].querySelector('.eur').value=saved.stayMoney?.eur||'';rows[0].querySelector('.krw').value=saved.stayMoney?.krw||''}if(rows[1]){rows[1].querySelector('.eur').value=saved.transportMoney?.eur||'';rows[1].querySelector('.krw').value=saved.transportMoney?.krw||''}const lists=[...card.querySelectorAll('.todo-list')];['morning','evening'].forEach((key,idx)=>{lists[idx].innerHTML='';(saved[key]||[]).forEach(todo=>{const item=document.createElement('div');item.className='todo';item.innerHTML=`<input type="checkbox" ${todo.checked?'checked':''} onchange="savePlanner()"><textarea class="todo-text" oninput="autoResize(this); savePlanner();">${escapeHtml(todo.text||'')}</textarea><button class="del" onclick="this.closest('.todo').remove(); savePlanner();">x</button>`;lists[idx].appendChild(item);autoResize(item.querySelector('textarea'))})})}});setupNoteBoard('notes');(data.notes||[]).forEach(note=>addNoteTo('notes',note,false));setupNoteBoard('packingNotes',true);(data.packingNotes||[]).forEach(note=>addNoteTo('packingNotes',note,true));isLoading=false}
-async function loadPlannerFromGoogle(){if(!isGoogleConnected())return false;return new Promise(resolve=>{const callbackName='plannerLoadCallback_'+Date.now();const script=document.createElement('script');let finished=false;function cleanup(){finished=true;delete window[callbackName];script.remove()}window[callbackName]=function(data){cleanup();if(!data||!data.cards){resolve(false);return}applyPlannerData(data);lastSavedJson=JSON.stringify(collectPlannerData());document.getElementById('saveStatus').textContent='공동수정 연결됨';resolve(true)};script.onerror=function(){if(finished)return;cleanup();document.getElementById('saveStatus').textContent='구글 불러오기 실패 · 로컬 백업 사용';resolve(false)};script.src=GOOGLE_SCRIPT_URL+'?action=load&callback='+callbackName+'&v='+Date.now();document.body.appendChild(script);setTimeout(()=>{if(finished)return;cleanup();document.getElementById('saveStatus').textContent='구글 불러오기 시간초과 · 로컬 백업 사용';resolve(false)},8000)})}
+async function loadPlannerFromFirebase(){
+  try{
+    const snap=await plannerDocRef.get();
+    if(!snap.exists)return false;
+    const data=snap.data();
+    if(!data||!data.cards)return false;
+    applyPlannerData(data);
+    lastSavedJson=JSON.stringify(collectPlannerData());
+    document.getElementById('saveStatus').textContent='공동수정 연결됨';
+    return true;
+  }catch(e){
+    console.error(e);
+    document.getElementById('saveStatus').textContent='Firebase 불러오기 실패 · 로컬 백업 사용';
+    return false;
+  }
+}
+function startFirebaseRealtime(){
+  if(unsubscribeFirebase)unsubscribeFirebase();
+  unsubscribeFirebase=plannerDocRef.onSnapshot(snap=>{
+    if(!snap.exists)return;
+    const data=snap.data();
+    if(!data||!data.cards)return;
+    const incomingJson=JSON.stringify(data);
+    if(incomingJson===lastSavedJson)return;
+    if(document.activeElement&&['TEXTAREA','INPUT'].includes(document.activeElement.tagName)){
+      pendingRemoteData=data;
+      document.getElementById('saveStatus').textContent='다른 사람이 수정함 · 입력 끝나면 반영됨';
+      return;
+    }
+    applyPlannerData(data);
+    lastSavedJson=JSON.stringify(collectPlannerData());
+    document.getElementById('saveStatus').textContent='공동수정 연결됨';
+  },e=>{
+    console.error(e);
+    document.getElementById('saveStatus').textContent='Firebase 연결 실패';
+  });
+}
+document.addEventListener('focusout',()=>{
+  if(!pendingRemoteData)return;
+  const data=pendingRemoteData;
+  pendingRemoteData=null;
+  applyPlannerData(data);
+  lastSavedJson=JSON.stringify(collectPlannerData());
+  document.getElementById('saveStatus').textContent='공동수정 연결됨';
+});
 function loadPlannerFromLocal(){const raw=localStorage.getItem(STORAGE_KEY);if(!raw)return false;applyPlannerData(JSON.parse(raw));lastSavedJson=JSON.stringify(collectPlannerData());return true}
-async function startPlanner(){setupNoteBoard('notes');addNoteTo('notes','Isolde 부부 만나기');addNoteTo('notes','루카스 부모님 만나기');addNoteTo('notes','베이킹 클래스 듣기');addNoteTo('notes','피크닉 가기');setupNoteBoard('packingNotes',true);addNoteTo('packingNotes','여권');addNoteTo('packingNotes','충전기 / 어댑터');addNoteTo('packingNotes','상비약');setupWhereColors();const loaded=await loadPlannerFromGoogle();if(!loaded){if(!loadPlannerFromLocal())savePlanner()}setTimeout(()=>document.querySelectorAll('textarea').forEach(autoResize),0);if(isGoogleConnected()){setInterval(async()=>{if(document.activeElement&&['TEXTAREA','INPUT'].includes(document.activeElement.tagName))return;await loadPlannerFromGoogle()},5000)}}
+async function startPlanner(){
+  setupNoteBoard('notes');
+  addNoteTo('notes','Isolde 부부 만나기');
+  addNoteTo('notes','루카스 부모님 만나기');
+  addNoteTo('notes','베이킹 클래스 듣기');
+  addNoteTo('notes','피크닉 가기');
+  setupNoteBoard('packingNotes',true);
+  addNoteTo('packingNotes','여권');
+  addNoteTo('packingNotes','충전기 / 어댑터');
+  addNoteTo('packingNotes','상비약');
+  setupWhereColors();
+  const loaded=await loadPlannerFromFirebase();
+  if(!loaded){
+    if(!loadPlannerFromLocal())savePlanner();
+  }
+  setTimeout(()=>document.querySelectorAll('textarea').forEach(autoResize),0);
+  startFirebaseRealtime();
+}
 startPlanner();
 </script>
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyAdx...",
-    authDomain: "yunji-travel-planner.firebaseapp.com",
-    projectId: "yunji-travel-planner",
-    storageBucket: "yunji-travel-planner.firebasestorage.app",
-    messagingSenderId: "175419854114",
-    appId: "1:175419854114:web:a7166c41cb85b79d0d697b",
-    measurementId: "G-X010BP6S06"
-  };
-
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-
-  const docRef = doc(db, "travel", "plan");
-
-  const textarea = document.createElement("textarea");
-  textarea.placeholder = "여행 계획 같이 쓰기";
-  textarea.style.width = "100%";
-  textarea.style.height = "200px";
-
-  document.body.prepend(textarea);
-
-  onSnapshot(docRef, (docSnap) => {
-    if (docSnap.exists()) {
-      textarea.value = docSnap.data().text || "";
-    }
-  });
-
-  textarea.addEventListener("input", async () => {
-    await setDoc(docRef, {
-      text: textarea.value
-    });
-  });
-</script>
-
 </body>
 </html>
