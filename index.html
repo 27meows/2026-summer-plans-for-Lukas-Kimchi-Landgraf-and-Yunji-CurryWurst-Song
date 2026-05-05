@@ -63,5 +63,44 @@ function loadPlannerFromLocal(){const raw=localStorage.getItem(STORAGE_KEY);if(!
 async function startPlanner(){setupNoteBoard('notes');addNoteTo('notes','Isolde 부부 만나기');addNoteTo('notes','루카스 부모님 만나기');addNoteTo('notes','베이킹 클래스 듣기');addNoteTo('notes','피크닉 가기');setupNoteBoard('packingNotes',true);addNoteTo('packingNotes','여권');addNoteTo('packingNotes','충전기 / 어댑터');addNoteTo('packingNotes','상비약');setupWhereColors();const loaded=await loadPlannerFromGoogle();if(!loaded){if(!loadPlannerFromLocal())savePlanner()}setTimeout(()=>document.querySelectorAll('textarea').forEach(autoResize),0);if(isGoogleConnected()){setInterval(async()=>{if(document.activeElement&&['TEXTAREA','INPUT'].includes(document.activeElement.tagName))return;await loadPlannerFromGoogle()},5000)}}
 startPlanner();
 </script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAdx...",
+    authDomain: "yunji-travel-planner.firebaseapp.com",
+    projectId: "yunji-travel-planner",
+    storageBucket: "yunji-travel-planner.firebasestorage.app",
+    messagingSenderId: "175419854114",
+    appId: "1:175419854114:web:a7166c41cb85b79d0d697b",
+    measurementId: "G-X010BP6S06"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  const docRef = doc(db, "travel", "plan");
+
+  const textarea = document.createElement("textarea");
+  textarea.placeholder = "여행 계획 같이 쓰기";
+  textarea.style.width = "100%";
+  textarea.style.height = "200px";
+
+  document.body.prepend(textarea);
+
+  onSnapshot(docRef, (docSnap) => {
+    if (docSnap.exists()) {
+      textarea.value = docSnap.data().text || "";
+    }
+  });
+
+  textarea.addEventListener("input", async () => {
+    await setDoc(docRef, {
+      text: textarea.value
+    });
+  });
+</script>
+
 </body>
 </html>
