@@ -134,6 +134,10 @@ document.addEventListener('focusout',()=>{
 });
 function loadPlannerFromLocal(){const raw=localStorage.getItem(STORAGE_KEY);if(!raw)return false;applyPlannerData(JSON.parse(raw));lastSavedJson=JSON.stringify(collectPlannerData());return true}
 async function startPlanner(){
+  // 처음 화면을 만드는 동안에는 자동 저장을 잠깐 막는다.
+  // 이유: 기본 환율/기본 포스트잇이 Firebase에 먼저 저장되어 기존 내용을 덮어쓰는 것을 방지하기 위해서.
+  isLoading=true;
+
   setupNoteBoard('notes');
   addNoteTo('notes','Isolde 부부 만나기');
   addNoteTo('notes','루카스 부모님 만나기');
@@ -144,10 +148,21 @@ async function startPlanner(){
   addNoteTo('packingNotes','충전기 / 어댑터');
   addNoteTo('packingNotes','상비약');
   setupWhereColors();
+
   const loaded=await loadPlannerFromFirebase();
+
   if(!loaded){
-    if(!loadPlannerFromLocal())savePlanner();
+    const localLoaded=loadPlannerFromLocal();
+    if(!localLoaded){
+      // Firebase에도 없고 내 컴퓨터 백업도 없을 때만, 방금 만든 기본 화면을 최초 저장한다.
+      isLoading=false;
+      savePlanner();
+    }
   }
+
+  // Firebase 또는 로컬 백업에서 불러온 경우에도, 여기서 저장 잠금을 확실히 푼다.
+  isLoading=false;
+
   setTimeout(()=>document.querySelectorAll('textarea').forEach(autoResize),0);
   startFirebaseRealtime();
 }
